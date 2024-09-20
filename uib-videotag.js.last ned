@@ -1,0 +1,154 @@
+
+var lastPressedPlayVideoScrollTop = null;
+var seenPlayingAfterVideoStarted = false;
+
+function onPlayVideo(playVideoButton) {
+    lastPressedPlayVideoScrollTop = $("body").scrollTop();
+    seenPlayingAfterVideoStarted = false;
+    var src = $(playVideoButton).attr("data-src") + "?autoplay=true";
+    $("#videoPlayerDiv").attr("width", "100%");
+    $("#videoPlayerDiv").attr("height", $(window).height()*0.8);
+    videoPlayer.loadVideoByUrl(src); // plays immediately, does not track!
+    // videoPlayer.cueVideoByUrl(src); // plays on "run", does track!
+    $("#playVideoPopup").modal("show");
+}
+
+function insertPlayVideoPopupHtml() {
+
+    var playVideoPopupHtml = (`
+<!-- begin playVideoPopup -->
+<div class="modal fade" id="playVideoPopup" tabindex="-1" aria-labelledby="videoModalLabel" aria-hidden="true">
+  <div class="modal-dialog" style="max-width:92%">
+    <div class="modal-content">
+      <div class="modal-header">
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="videoPlayerDiv"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- end playVideoPopup -->
+`
+    );
+    $("body").append(playVideoPopupHtml);
+    $('#playVideoPopup').on('hide.bs.modal', function() {
+      videoPlayer.stopVideo();
+    });
+  }
+  
+
+var videoPlayer;
+
+function onYouTubePlayerReady() {
+    setupPlayVideoButtons();
+}
+
+function onYouTubePlayerStateChange(newState) {
+    // alert("state change, state=" + newState.data);
+    // see https://developers.google.com/youtube/js_api_reference?csw=1#Events
+    if (newState.data == YT.PlayerState.PLAYING) {
+        seenPlayingAfterVideoStarted = true;
+    }
+    else if ((newState.data == YT.PlayerState.ENDED) ||
+             (newState.data == YT.PlayerState.UNSTARTED)) {
+        // Stop the video if has ended, this prevents youtube from showing unrelated videos
+        if ((newState.data == YT.PlayerState.ENDED)) {
+            videoPlayer.stopVideo();
+        }
+        // reset page position since it zeroes after fullsize video (in chrome)
+        var scrollTop = lastPressedPlayVideoScrollTop;
+        lastPressedPlayVideoScrollTop = null;
+        if (scrollTop !== null) {
+            $("body").scrollTop(scrollTop);
+            if (seenPlayingAfterVideoStarted) {
+                // @TODO: reconsider this.  We get here when the video
+                // ended on its own.  Should we close the popup?
+                // The next does that, but would leave the browser
+                // in fullscreen, which is suboptimal.
+                // $("#playVideoPopup").modal("hide");
+            }
+        }
+    }
+}
+
+function onYouTubeIframeAPIReady() {
+    videoPlayer = new YT.Player('videoPlayerDiv', {
+      height: '390',
+      width: '640',
+      playerVars: {
+        autoplay: 1,
+        iv_load_policy: 3,
+        modestbranding: 1,
+        rel: 0, // only show related content from same channel
+        ecver: 2, // do not display related videos on pause
+        origin: "",
+      },
+      events: {
+        'onReady': onYouTubePlayerReady,
+        'onStateChange': onYouTubePlayerStateChange
+      }
+    });
+}
+
+function setupPlayVideoButtons() {
+    $("span.play-video button").each(function(i) {
+        $(this).removeAttr("disabled");
+    });
+}
+
+function preSetupPlayVideoButtons() {
+    $("span.play-video").each(function(i) {
+        var src = $(this).attr("data-src");
+        var useBRs = false;
+
+        var content = "video";
+        if ($(this).html().length > 0) {
+            content = $(this).html();
+        }
+        var html = (
+`<button type="button" class="btn btn-outline-primary btn-sm" onclick="onPlayVideo(this)" data-src="` + src + `" disabled>
+    <i class="bi bi-camera-video-fill"></i> ` + content + '</button>')
+
+        $(this).html(html);
+    });
+}
+
+
+function loadJs(url, callback) {
+    // Don't use $.getScript since it disables caching
+    callback = callback || jQuery.noop;
+    $.ajax({'url':url,'dataType':'script','cache':true,'success':callback});
+};
+
+function asyncLoadOrCallList(urlOrFnList, callback) {
+    callback = callback || jQuery.noop;
+    var i = -1;
+    var innerCallback = function() {
+        i += 1;
+        if (i == urlOrFnList.length) callback();
+        else if (urlOrFnList[i] instanceof Function) {
+            urlOrFnList[i]();
+            innerCallback();
+        }
+        else loadJs(urlOrFnList[i], innerCallback);
+    };
+    innerCallback();
+}
+
+function setupVideos() {
+    urlOrFnList = [
+        insertPlayVideoPopupHtml, // do this first!
+        "https://www.youtube.com/iframe_api",
+        // setupPlayVideoButtons, // called when YouTube player is ready
+    ]
+    asyncLoadOrCallList(urlOrFnList);
+}
+
+// preSetupPlayVideoButtons();  --  taken care of by yt tag in hugo
+$(document).ready(function() {
+    if ($("span.play-video").length > 0) {
+        setupVideos();
+    }
+});

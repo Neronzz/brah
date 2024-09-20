@@ -1,0 +1,494 @@
+// This online brython/python3 editor is based on the editor in the notes at 
+// https://www.kosbie.net/cmu/spring-22/15-112/
+
+////////////////////
+// Timeout checker
+////////////////////
+
+function getTime() {
+    return new Date().getTime();
+  }
+  
+  function isIdentifierStart(c) {
+    // letter, _, $
+    var code = c.charCodeAt(0);
+    return ((c == '_') ||
+            (c == '$') ||
+            ((code >= "a".charCodeAt(0)) && (code <= "z".charCodeAt(0))) ||
+            ((code >= "A".charCodeAt(0)) && (code <= "Z".charCodeAt(0)))
+            );
+  }
+  
+  function isIdentifierPart(c) {
+    // start (letter, _, $) or digit
+    var code = c.charCodeAt(0);
+    return ((isIdentifierStart(c)) ||
+            ((code >= "0".charCodeAt(0)) && (code <= "9".charCodeAt(0)))
+            );
+  }
+  
+  function patchCodeToCheckTimeout(code) {
+    var result = "";
+    var i0=0; // start of substring to copy to result
+    var inString=false, endQuote, inComment=false;
+    var inLoopPreColon=false, inLoopPostColon=false;
+    var curr;
+    var bracketCount=0, parenCount=0;
+    for (var i=0; i<code.length; i++) {
+      curr = code[i];
+      if (inComment)
+        inComment = (curr != '\n');
+      else if ((!inString) && (curr == '#'))
+        inComment = true;
+      else if (inString) {
+        if (endQuote.length == 3)
+          inString = ((curr + code[i-1] + code[i-2]) != endQuote);
+        else
+          inString = ((curr == '\n') ||
+                      ((curr != endQuote) || (code[i-1] == '\\')));
+      }
+      else if ((curr == '"') || (curr == "'")) {
+        inString = true;
+        if ((i+2 < code.length) && (code[i+1] == curr) && (code[i+2] == curr))
+          { endQuote = curr+curr+curr; i+=2; }
+        else
+          endQuote = curr;
+      }
+      else if (inLoopPostColon) {
+        // we've seen "while ...:" or "for ...:"
+        // so looking for first non-whitespace outside comment or quote
+        if ((curr != " ") && (curr != "\t") && (curr != "\n")) {
+          // we did it!  time to add the patch!
+          result += code.substring(i0,i);
+          result += "_w._ct();"
+          i0 = i;
+          inLoopPostColon = false;
+        }
+      }
+      else if (inLoopPreColon) {
+        // we've seen "while..." or "for ..."
+        // so we're looking for the first colon outside comment or quote
+        // and also outside any [brackets] or (parens)
+        if (curr == "(") parenCount += 1;
+        else if (curr == ")") parenCount -= 1;
+        else if (curr == "[") bracketCount += 1;
+        else if (curr == "]") bracketCount -= 1;
+        else if ((curr == ":") && (parenCount == 0) && (bracketCount == 0)) {
+          inLoopPreColon = false;
+          inLoopPostColon = true;
+        }
+      }
+      else if ((i >= 1) &&
+               !isIdentifierPart(curr) &&
+               isIdentifierPart(code[i-1])) {
+        // we're looking for "while" or "for" outside comment or quote
+        // and we're just past an identifier, so find it
+        var j = i-1;
+        while ((j > 0) && isIdentifierStart(code[j-1])) j -= 1;
+        var identifier = code.substring(j,i);
+        if ((identifier == "for") || (identifier == "while")) {
+          if (curr == ":")
+            inLoopPostColon = true;
+          else {
+            inLoopPreColon = true;
+            bracketCount = 0;
+            parenCount = 0;
+          }
+        }
+      }
+    }
+    result += code.substring(i0,i); // add last bit of code
+    // alert(result);
+    return result;
+  }
+  
+  // See: https://groups.google.com/forum/#!topic/brython/xLv55qq-L1s
+  function addHiddenCodeDiv(id, code) {
+    var newDiv = document.createElement('pre');
+    newDiv.id = id;
+    newDiv.style.visibility = 'hidden';
+    newDiv.type = 'text/python3';
+    newDiv.textContent = code;
+    document.body.appendChild(newDiv);
+    return newDiv
+  }
+  
+  ////////////////////
+  // MBP (Modal Brython Popup)
+  ////////////////////
+  
+  var MBP = {
+    brythonInited: false,
+    aceEditor: null,
+    code: "# your code",
+  
+    runCodeInEditor: function() { MBP.run(null); },
+  
+    initThenRun: function(code) {
+      if (MBP.brythonInited == true) {
+        alert("ModalBrythonPython: Init called more than once!");
+        return;
+      }
+      // init the ACE editor
+      MBP.aceEditor = ace.edit("mbpAceEditor");
+      MBP.aceEditor.getSession().setMode("ace/mode/python");
+      MBP.aceEditor.setTheme("ace/theme/xcode");
+      MBP.aceEditor.setFontSize(13);
+      MBP.aceEditor.setHighlightActiveLine(false);
+      MBP.aceEditor.$blockScrolling = Infinity; // as per ace's error msg
+      MBP.aceEditor.commands.addCommand({
+        name: "run",
+        bindKey: {win: "Ctrl-R", mac: "Ctrl-R"},
+        exec: function(editor) { MBP.runCodeInEditor(); },
+        readOnly: true
+        });
+      $("#modalBrythonPopup").on("shown.bs.modal", function() {
+        MBP.aceEditor.resize(true); // force synchronous update
+        // TODO: not use a timout here. Used such that editor has time to update content.
+        setTimeout(() => { MBP.evalBrython(MBP.code); }, 20);
+      });
+      MBP.brythonInited = true;
+      MBP.run(MBP.code);
+    },
+  
+    run: function(code) {
+      if (code != null) {
+        code = $('<textarea />').html(code).text(); // unconvert &gt to >, etc
+        //console.log(code);
+      }
+      MBP.code = code;
+      if (MBP.brythonInited == false) {
+        MBP.initThenRun();
+        return;
+      }
+      if (code == null) {
+        code = MBP.aceEditor.getValue();
+        code = $('<textarea />').html(code).text(); // unconvert &gt to >, etc
+      }
+      else {
+        MBP.aceEditor.setValue(code);
+        MBP.aceEditor.clearSelection();
+      }
+      MBP.code = code;
+      $("#mbpConsole").html("");
+      if (!$('#modalBrythonPopup').is(':visible')) {
+        $("#modalBrythonPopup").modal("show"); // will run with on("shown")
+      }
+      else {
+        // @TODO: not use a timeout here.  We use it so that
+        // the mbpConsole has time to actually clear (otherwise
+        // the previous output remains there until the end of the run)
+        setTimeout(function() { MBP.evalBrython(MBP.code); }, 10);
+      }
+    },
+  
+    onRun: function(runButton) {
+      MBP.runCodeInEditor();
+    },
+  
+    onClose: function(closeButton) {
+      $("#modalBrythonPopup").modal("hide");
+    },
+  
+    onAboutBrython: function(onAboutBrythonButton) {
+      window.open("http://www.brython.info/",'_blank');
+    },
+  
+    consoleLogFn: function(line) {
+        var mbpConsole = $("#mbpConsole");
+        if (!mbpConsole) alert("ModalBrythonPopup: missing console!");
+        // @TODO: clean up "import _sys from VFS" lines more cleanly
+        if ((line.indexOf("import ") == 0) && (line.indexOf("from VFS") > 0)) {
+          // bogus line, just eat it
+          return;
+        }
+        // Can't just mbpConsole.append(line) since we have to escape strings
+        $(document.createTextNode(line)).appendTo(mbpConsole);
+        mbpConsole.scrollTop(mbpConsole.innerHeight());
+    },
+  
+    evalBrython: function(code) {
+    
+      code = patchCodeToCheckTimeout(code);
+  
+      // now capture console
+      var _log = console.log;
+      console.log = function() {
+        var args, i;
+        args = []; for (i=0; i<arguments.length; i++) args.push(arguments[i]);
+        MBP.consoleLogFn(args.toString());
+      };
+      try {
+            brython({debug:1});
+            var brythonCode = `
+  from browser import window as _w, alert as _a
+  import sys as _s
+  
+  def _ct():
+      if (_w.getTime() - _w._t0 > 3000):
+          raise Exception('Timeout! (Perhaps you have an infinite loop? Or did you spend to much time giving input? Timeout here on the UiB page is only 3 seconds!)')
+  _w._ct = _ct
+  
+  def _run():
+      _w._t0 = _w.getTime()
+      try:
+        exec(_w._code, globals())
+        _w._t1 = _w.getTime()
+        print(f'[completed in {_w._t1-_w._t0} ms]')
+      except Exception as e:
+        exc_info = _s.exc_info()
+        exc_class = exc_info[0].__name__
+        exc_msg = str(exc_info[1])
+        tb = exc_info[2]
+        if exc_info[0] is SyntaxError:
+            args = exc_info[1].args
+            info, filename, lineno, offset, line = args
+            print(f"  line {lineno}")
+            print("    " + line)
+            print("    " + offset * " " + "^")
+            print("SyntaxError:", info)
+        else:
+          print("Traceback (most recent call last):")
+          while tb is not None:
+              frame = tb.tb_frame
+              code = frame.f_code
+              name = code.co_name
+              #filename = code.co_filename
+              if (name != '_run'):
+                inFn = '' if (name == '<module>') else f', in {name}'
+                print(f"  line {tb.tb_lineno}{inFn}")
+                print(f"    {tb.tb_lasti}")
+              tb = tb.tb_next
+          print(f"{exc_class}: {exc_msg}")
+  _run()
+  `;
+           window._code = code;
+            __BRYTHON__.run_script(brythonCode, "__main__", true);
+      }
+      catch (err) {
+          errMsg = err.toString();
+          if (errMsg != "Error") {
+            // ignore generic "Error", since Brython will output Python err
+            console.log("Brython Error: " + errMsg);
+            console.log("<completed (error)>");
+          }
+      }
+      finally {
+        console.log = _log;
+      }
+    },
+  
+    modalBrythonPopupHtml: (
+    `<!-- begin ModalBrythonPopup -->
+    <div class="modal fade" id="modalBrythonPopup" tabindex="-1" role="dialog" aria-labelledby="pyeditModalLabel">
+        <div class="modal-dialog" style="width:90vw; max-width:52em; height:90vh;">
+          <div class="modal-content" style="height:100%;">
+            <div class="modal-header">
+                <button type="button" class="btn btn-outline-primary btn-sm" onclick="MBP.onRun(this)" aria-label="Run">
+                    <i class="bi bi-play-circle"></i>
+                    Kjør
+                </button>
+                <button type="button" class="btn-close" onclick="MBP.onClose(this)" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="modalBrythonPopupBody" style="overflow:auto; display:flex; flex-direction:column;">
+              <div id="mbpAceEditor" style="width:100%; min-height:10em; height:49%; margin-bottom:.5em; overflow:visible;">
+                # Your code goes here
+              </div>
+              <div id="mbpConsoleDiv" style="min-height:10em; max-height:49%; overflow:auto">
+                <pre id="mbpConsole" 
+                     style="background-color:#F0F8FF;
+                            width:100%;">
+                </pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    <!-- end ModalBrythonPopup -->
+    `),
+  
+    insertModalBrythonPopupHtml: function() {
+      $("body").append(MBP.modalBrythonPopupHtml);
+    },
+  };
+
+function fallbackCopyTextToClipboard(text) {
+    var textArea = document.createElement("textarea");
+    textArea.value = text;
+    
+    // Avoid scrolling to bottom
+    textArea.style.top = "0";
+    textArea.style.left = "0";
+    textArea.style.position = "fixed";
+  
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+  
+    try {
+      var successful = document.execCommand('copy');
+      var msg = successful ? 'successful' : 'unsuccessful';
+      console.log('Fallback: Copying text command was ' + msg);
+    } catch (err) {
+      console.error('Fallback: Oops, unable to copy', err);
+    }
+  
+    document.body.removeChild(textArea);
+}
+
+function copyTextToClipboard(text) {
+    if (!navigator.clipboard) {
+        fallbackCopyTextToClipboard(text);
+        return;
+    }
+    navigator.clipboard.writeText(text).then(function() {
+        console.log('Async: Copying to clipboard was successful!');
+    }, function(err) {
+        console.error('Async: Could not copy text: ', err);
+    });
+}
+
+function onRunClicked(runButton) {
+    if (!$("#modalBrythonPopup").length) {
+        oops("onCodeRun: Cannot find modalBrythonPopup!");
+    }
+    var code = $(runButton).parent().parent().children().get(0).firstChild.textContent;
+    console.log(code);
+    MBP.run(code);
+}
+
+function onCopyClicked(copyButton) {
+    var code = $(copyButton).parent().parent().children().get(0).firstChild.textContent;
+    console.log(code);
+    copyTextToClipboard(code);
+}
+
+function launchTraceVisualization(code, cumulative, heapPrimitives) {
+    code = "# UiB INF100\n\n" + code;
+    code = encodeURIComponent(code);
+    code = code.replace(/%26lt%3B/g, "%3C")
+               .replace(/%26gt%3B/g, "%3E");
+    var url = "http://pythontutor.com/iframe-embed.html#";
+    url += "code=" + code;
+    url += "&cumulative=" + cumulative + "&py=311&codeDivWidth=700&heapPrimitives=" + heapPrimitives;
+    window.open(url, "_blank");
+}
+
+function onTraceClicked(traceButton) {
+    var code = $(traceButton).parent().parent().children().get(0).firstChild.textContent;
+    var highlight = $(traceButton).closest(".highlight");
+    var heapPrimitives = highlight.attr('heapPrimitives') || 'nevernest';
+    var cumulative = highlight.attr('cumulative') || 'false';
+    console.log(code);
+    console.log(heapPrimitives);
+    launchTraceVisualization(code, cumulative, heapPrimitives);
+}
+
+function setupPyEditorButtons() {
+    $('.highlight:not([runbuttons=false]):not([disablerunbutton=true]):not([copybuttononly=true]) code.language-python').each(function(i) {
+        var $this = $(this);
+        var heapPrimitives = $this.attr('heapPrimitives') || 'nevernest';
+        console.log(this)
+        var buttons = `
+        <div style="text-align:right;margin-bottom:.8em">
+            <button type="button" class="btn btn-outline-primary btn-sm" onclick="onCopyClicked(this)">
+                <i class="bi bi-files"></i> Kopier
+            </button>
+            <button type="button" class="btn btn-outline-primary btn-sm" onclick="onTraceClicked(this)">
+                <i class="bi bi-eye"></i> Se steg
+            </button>
+            <button type="button" class="runbutton btn btn-outline-primary btn-sm" onclick="onRunClicked(this)" disabled>
+                <i class="bi bi-play-circle"></i> Kjør
+            </button>
+        </div>`;
+        $(this).parent().parent().append(buttons);
+        $(this).parent().attr("style", ";margin-bottom:0.4em;" + $(this).parent().attr("style"));
+    });
+
+    $('.highlight[copybuttononly=true]:not([runbuttons=false]) code.language-python').each(function(i) {
+        var $this = $(this);
+        var buttons = `
+        <div style="text-align:right;margin-bottom:.8em">
+            <button type="button" class="btn btn-outline-primary btn-sm" onclick="onCopyClicked(this)">
+                <i class="bi bi-files"></i> Kopier
+            </button>
+        </div>`;
+        $(this).parent().parent().append(buttons);
+        $(this).parent().attr("style", ";margin-bottom:0.4em;" + $(this).parent().attr("style"));
+    });
+
+    $('.highlight[disablerunbutton=true]:not([runbuttons=false]) code.language-python').each(function(i) {
+        var $this = $(this);
+        var buttons = `
+        <div style="text-align:right;margin-bottom:.8em">
+            <button type="button" class="btn btn-outline-primary btn-sm" onclick="onCopyClicked(this)">
+                <i class="bi bi-files"></i> Kopier
+            </button>
+            <button type="button" class="btn btn-outline-primary btn-sm" onclick="onTraceClicked(this)">
+                <i class="bi bi-eye"></i> Se steg
+            </button>
+        </div>`;
+        $(this).parent().parent().append(buttons);
+        $(this).parent().attr("style", ";margin-bottom:0.4em;" + $(this).parent().attr("style"));
+    });
+}
+
+function enablePyRunButtons() {
+    $('.highlight .runbutton').each(function(i) {
+        // Remove disabled attribute
+        $(this).removeAttr("disabled");
+    });
+}
+
+function oops(msg) {
+    alert("Error: " + msg);
+    console.log("Error: " + msg);
+    throw(msg);
+}
+
+function getRelativePathToHtml() {
+    var thisUrl = document.location.toString();
+    var jsUrl = $("#pyeditscript")[0].src;
+    // thisUrl like: http://127.0.0.1:8000/src/notes/notes-getting-started.html
+    // jsUrl   like: http://127.0.0.1:8000/src/js/uib-pyedit.js
+    // need:                                   notes/notes-getting-started.html
+    var suffix = "js/uib-pyedit.js"
+    if (jsUrl.indexOf(suffix) != jsUrl.length - suffix.length)
+        oops("getRelativePathToHtml: jsUrl does not end with js/uib-pyedit.js!");
+    var prefix = jsUrl.substring(0, jsUrl.length - suffix.length);
+    if (thisUrl.indexOf(prefix) != 0)
+        oops("getRelativePathToHtml: thisUrl does not start with " + prefix + "!");
+    return thisUrl.substring(prefix.length);
+}
+
+function getFolderDepthOfHtml() {
+    var path = getRelativePathToHtml();
+    var folders = 0;
+    for (var i=0; i<path.length; i++) if (path[i] == "/") folders += 1;
+    return folders;
+}
+
+function adjustAceBasePath() {
+    // ace.config.set("packaged", true);
+    // ace.config.set("basePath", "../js/");
+    var path = "";
+    var depth = getFolderDepthOfHtml();
+    for (var i=0; i<depth; i++) path += "../";
+    path += "js/";
+    ace.config.set("basePath", path);
+}
+
+function setupPyEditor() {
+    adjustAceBasePath();
+    MBP.insertModalBrythonPopupHtml()
+    enablePyRunButtons();
+}
+
+if ($(".highlight:not([runbuttons=false]) code.language-python").length > 0) {
+    setupPyEditorButtons();
+}
+$(document).ready(function() {
+    if ($(".highlight:not([runbuttons=false]) code.language-python").length > 0) {
+        setupPyEditor();
+    }
+});

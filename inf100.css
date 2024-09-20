@@ -1,0 +1,108 @@
+/* Fix line numbers alignment for Bootstrap 5 */
+code, pre {
+    unicode-bidi: normal;
+}
+
+/* Extra space over h5 */
+h5 {
+    margin-top: 1.3em;
+}
+/* Extra space over h4 */
+h4 {
+    margin-top: 1.3em;
+}
+/* Extra space over h2 */
+h3 {
+    margin-top: 2em;
+}
+
+h1 {
+    margin-bottom: 1em;
+}
+
+/* Center align first columns */
+.center-col-1 td:nth-child(1), .center-col-1 th:nth-child(1) { 
+    text-align:center
+}
+
+/* No line breaks in second column  */
+.nobreak-col-1 td:nth-child(1), .nobreak-col-2 td:nth-child(2),
+.nobreak-col-3 td:nth-child(3), .nobreak-col-3 th:nth-child(4) { 
+    white-space: nowrap;
+}
+
+.col-1-vertical-middle td:nth-child(1) {
+    vertical-align: middle;
+}
+
+body {
+    overflow-y: scroll;
+}
+
+table {
+    width: 100%;
+}
+
+
+/* Tables for comparing code snippets */
+.code-compare-table {
+    width: 100%;
+    table-layout: fixed;
+}
+
+.code-compare-table tbody {
+    vertical-align: top;
+}
+
+.code-compare-table td {
+    width: 50%;
+}
+
+
+/* Highlight user input in console demonstrations */
+.user-input {
+    /* background-color: #e2fffe; */
+    color: darkolivegreen;
+    font-weight: bold;
+}
+
+blockquote {
+    background-color: #f5ede3;
+    font-style: italic;
+    padding: 1em 1em .2em 1em;
+
+    border: 1px solid #ccc;
+    border-radius: 4px;
+}
+
+.level-container blockquote {
+    background-color: #f8f4f5;
+}
+
+.card-body :last-child {
+    margin-bottom: 0;
+}
+
+@media screen and (max-width: 500px) { 
+
+    .hide-col-2-if-narrow td:nth-child(2), .hide-col-2-if-narrow th:nth-child(2) {
+        display:none;
+    }
+    .hide-col-1-if-narrow td:nth-child(1), .hide-col-1-if-narrow th:nth-child(1) {
+        display:none;
+    }
+ 
+ }
+
+/* p tags that follow directly after a .highlight div */
+.highlight + p {
+    margin-top: 1em;
+}
+
+.cimg-container {
+    margin-bottom: 1em;
+}
+
+.highlight.textwrap code {
+    text-wrap: wrap;
+}
